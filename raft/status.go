@@ -25,17 +25,20 @@ import (
 // The Progress is only populated on the leader.
 type Status struct {
 	BasicStatus
-	Config   tracker.Config
+	Config tracker.Config
+	// 如果当前节点是 Leader 节点，在该字段中还记录了集群中每个节点对应的 Progress 实例
 	Progress map[uint64]tracker.Progress
 }
 
 // BasicStatus contains basic information about the Raft peer. It does not allocate.
 type BasicStatus struct {
+	// 当前节点 ID
 	ID uint64
 
 	pb.HardState
 	SoftState
 
+	// 已应用的 Entry 记录的最大索引值
 	Applied uint64
 
 	LeadTransferee uint64
