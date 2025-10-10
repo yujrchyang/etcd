@@ -26,10 +26,18 @@ import (
 )
 
 // a key-value store backed by raft
+// 用于存储键值对信息，kvstore 扮演了持久化存储的角色
 type kvstore struct {
-	proposeC    chan<- string // channel for proposing updates
-	mu          sync.RWMutex
-	kvStore     map[string]string // current committed key-value pairs
+	// channel for proposing updates
+	// httpKVAPI 处理 HTTP PUT 请求时，会调用 kvstore.Propose() 方法将用户请求的数据
+	// 写入 propose 通道中，之后 raftNode 会从该通道中读取数据并进行处理
+	proposeC chan<- string
+	// 用于保护 kvStore
+	mu sync.RWMutex
+	// current committed key-value pairs
+	// 该字段是用来存储键值对的 map，其中存储的键值都是 string 类型
+	kvStore map[string]string
+	// 该字段负责读取快照文件
 	snapshotter *snap.Snapshotter
 }
 
@@ -70,16 +78,22 @@ func (s *kvstore) Propose(k string, v string) {
 	s.proposeC <- buf.String()
 }
 
+// raftNode 会将待应用的 Entry 记录写入 commitC 通道中，另外，当需要加载快照数据时，它会
+// 向 commitC 通道写入 nil 作为信号，该函数用于处理相关内容
 func (s *kvstore) readCommits(commitC <-chan *commit, errorC <-chan error) {
+	// 循环读取 commitC 通道
 	for commit := range commitC {
+		// 读取到 nil 时表示需要读取快照数据
 		if commit == nil {
 			// signaled to load snapshot
+			// 通过 snapshotter 读取快照文件
 			snapshot, err := s.loadSnapshot()
 			if err != nil {
 				log.Panic(err)
 			}
 			if snapshot != nil {
 				log.Printf("loading snapshot at term %d and index %d", snapshot.Metadata.Term, snapshot.Metadata.Index)
+				// 读取快照数据
 				if err := s.recoverFromSnapshot(snapshot.Data); err != nil {
 					log.Panic(err)
 				}
@@ -88,11 +102,13 @@ func (s *kvstore) readCommits(commitC <-chan *commit, errorC <-chan error) {
 		}
 
 		for _, data := range commit.data {
+			// 将读取到的数据进行反序列化得到 kv 实例
 			var dataKv kv
 			dec := gob.NewDecoder(bytes.NewBufferString(data))
 			if err := dec.Decode(&dataKv); err != nil {
 				log.Fatalf("raftexample: could not decode message (%v)", err)
 			}
+			// 加锁保护，将读取到的数据保存到 kvStore 中
 			s.mu.Lock()
 			s.kvStore[dataKv.Key] = dataKv.Val
 			s.mu.Unlock()
@@ -123,11 +139,12 @@ func (s *kvstore) loadSnapshot() (*raftpb.Snapshot, error) {
 
 func (s *kvstore) recoverFromSnapshot(snapshot []byte) error {
 	var store map[string]string
+	// 快照数据反序列化得到一个 map
 	if err := json.Unmarshal(snapshot, &store); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.kvStore = store
+	s.kvStore = store // 替换现有 kvStore
 	return nil
 }
