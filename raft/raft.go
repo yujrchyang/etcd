@@ -676,6 +676,7 @@ func (r *raft) advance(rd Ready) {
 // the commit index changed (in which case the caller should call
 // r.bcastAppend).
 func (r *raft) maybeCommit() bool {
+	// 获取当前集群配置下的多数
 	mci := r.prs.Committed()
 	return r.raftLog.maybeCommit(mci, r.Term)
 }

@@ -595,10 +595,15 @@ func (rc *raftNode) serveChannels() {
 	// 该循环主要负责处理底层 etcd-raft 组件返回的 Ready 数据
 	for {
 		select {
+		// 循环定时器的信道，每次收到信号后，调用 Node 接口的 Tick() 函数驱动 Node
 		case <-ticker.C:
 			rc.node.Tick() // 定时器触发，推进逻辑时钟
 
 		// store raft entries to wal, then publish over commit channel
+		// Node.Ready() 返回的信道，每当 Node 准备好一批数据后，会将数据通过该
+		// 信道发布。开发者需要对该信道收到的 Ready 结构体中的各字段进行处理。
+		// 在处理完一批数据后，开发者还需要调用 Node.Advance() 告知 Node 这批
+		// 数据已处理完成，可以继续传入下一批数据
 		case rd := <-rc.node.Ready():
 			// 将当前 etcd-raft 组件的状态信息，以及待持久化的 Entry 记录先记录
 			// 到 WAL 日志文件中，即使之后宕机，这些信息也可以在节点下次启动时，
@@ -632,12 +637,14 @@ func (rc *raftNode) serveChannels() {
 			rc.node.Advance()
 
 		// 处理网络异常
+		// 通信模块报错信道，收到来自该信道的错误后 raftNode 会继续上报该错误，并关闭节点
 		case err := <-rc.transport.ErrorC:
 			// 关闭与集群中其他节点的网络连接
 			rc.writeError(err)
 			return
 
 		// 处理关闭命令
+		// 用来表示停止信号的信道，当该信道被关闭时，阻塞的逻辑会从该分支运行，关闭节点
 		case <-rc.stopc:
 			rc.stop()
 			return

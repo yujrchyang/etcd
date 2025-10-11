@@ -58,43 +58,66 @@ type Ready struct {
 	// The current volatile state of a Node.
 	// SoftState will be nil if there is no update.
 	// It is not required to consume or store SoftState.
+	//
+	// 当前节点的易失状态。如果该状态没有任何更新则该字段 nil。易失状态不需要被处理或存储，
+	// 仅当用户需要其中信息时才需要使用该字段
 	*SoftState
 
 	// The current state of a Node to be saved to stable storage BEFORE
 	// Messages are sent.
 	// HardState will be equal to empty state if there is no update.
+	//
+	// raft 的持久状态，在向其他节点发送消息前，需要先存储该状态。
+	// 同样，如果其没有任何更新，该字段为一个空值
 	pb.HardState
 
 	// ReadStates can be used for node to serve linearizable read requests locally
 	// when its applied index is greater than the index in ReadState.
 	// Note that the readState will be returned when raft receives msgReadIndex.
 	// The returned is only valid for the request that requested to read.
+	//
 	// 该字段记录了当前节点中等待处理的只读请求
 	ReadStates []ReadState
 
 	// Entries specifies entries to be saved to stable storage BEFORE
 	// Messages are sent.
+	//
 	// 该字段中的 Entry 记录时从 unstable 中读取出来的，上层模块会将其保存到 Storage 中
+	// 需要保存到稳定存储的日志条目，其需要在向其他节点发送消息前存储
 	Entries []pb.Entry
 
 	// Snapshot specifies the snapshot to be saved to stable storage.
+	//
 	// 待持久化的快照数据，raftpb.Snapshot 中封装了快照数据及相关元数据
+	// 需要被保存到稳定存储的快照
 	Snapshot pb.Snapshot
 
 	// CommittedEntries specifies entries to be committed to a
 	// store/state-machine. These have previously been committed to stable
 	// store.
+	//
+	// 已通过 raft 算法提交的日志条目，开发者需要将这些条目应用到自己的状态机中（在
+	// raftexample 中即为 kvstore），这些条目在之前已经被应用到了稳定存储中
 	CommittedEntries []pb.Entry
 
 	// Messages specifies outbound messages to be sent AFTER Entries are
 	// committed to stable storage.
 	// If it contains a MsgSnap message, the application MUST report back to raft
 	// when the snapshot has been received or has failed by calling ReportSnapshot.
+	//
 	// 该字段中保存了当前节点中等待发送到其他节点的 Message 消息
+	// 需要发送给其他节点的消息。在发送这些消息前，需要先将 HardState 和 Entries 保存到
+	// 稳定存储中。如果这些消息中有 MsgSnap 消息（用来传输快照的消息），开发者必需在节点
+	// 收到快照或接受快照失败后调用 ReportSnapshot 方法通知 Node（因为 Leader 向某个
+	// Follower 发送快照时会暂停向该 Follower 发送 raft 日志的操作，因此需要报告快照
+	// 发送完成或失败以让 Leader 继续对其进行操作
 	Messages []pb.Message
 
 	// MustSync indicates whether the HardState and Entries must be synchronously
 	// written to disk or if an asynchronous write is permissible.
+	//
+	// 该字段表示 HardState 和 Entries 是否必须同步写入磁盘，如果该字段为 false，
+	// 则可以异步写入
 	MustSync bool
 }
 
@@ -551,13 +574,13 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 		pm.result = make(chan error, 1)
 	}
 	select {
-	case ch <- pm: // 将消息写入 recvc 或 propc 通道中
-		if !wait {
+	case ch <- pm: // 将消息写入 recvc 或 propc 通道中，写入成功进入该 case
+		if !wait { // 如果不需要等待则直接返回
 			return nil
 		}
-	case <-ctx.Done():
+	case <-ctx.Done(): // 等到消息执行完成，执行完成后返回结果
 		return ctx.Err()
-	case <-n.done:
+	case <-n.done: // 如果通道关闭则返回
 		return ErrStopped
 	}
 	select {

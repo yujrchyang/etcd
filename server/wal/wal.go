@@ -558,6 +558,7 @@ func ValidSnapshotEntries(lg *zap.Logger, walDir string) ([]walpb.Snapshot, erro
 	var err error
 
 	rec := &walpb.Record{}
+	// "%016x-%016x.wal"
 	names, err := readWALNames(lg, walDir)
 	if err != nil {
 		return nil, err
